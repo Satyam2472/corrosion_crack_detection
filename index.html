@@ -1,0 +1,701 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>CorroScan — Pipeline Inspection AI</title>
+  <link href="https://fonts.googleapis.com/css2?family=Share+Tech+Mono&family=Barlow+Condensed:wght@300;400;600;700;900&display=swap" rel="stylesheet"/>
+  <style>
+    :root {
+      --bg:         #0a0c0f;
+      --panel:      #111418;
+      --border:     #1e2530;
+      --accent:     #f97316;
+      --accent-dim: #7c3910;
+      --safe:       #22c55e;
+      --danger:     #ef4444;
+      --muted:      #4a5568;
+      --text:       #cbd5e1;
+      --bright:     #f1f5f9;
+    }
+
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      background: var(--bg);
+      color: var(--text);
+      font-family: 'Barlow Condensed', sans-serif;
+      min-height: 100vh;
+      overflow-x: hidden;
+    }
+
+    /* ── SCANLINE OVERLAY ── */
+    body::before {
+      content: '';
+      position: fixed; inset: 0;
+      background: repeating-linear-gradient(
+        0deg,
+        transparent,
+        transparent 2px,
+        rgba(0,0,0,0.08) 2px,
+        rgba(0,0,0,0.08) 4px
+      );
+      pointer-events: none;
+      z-index: 999;
+    }
+
+    /* ── HEADER ── */
+    header {
+      border-bottom: 1px solid var(--border);
+      padding: 0 2rem;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      height: 56px;
+      position: relative;
+    }
+    header::after {
+      content: '';
+      position: absolute;
+      bottom: -1px; left: 0;
+      width: 220px; height: 1px;
+      background: var(--accent);
+    }
+
+    .logo {
+      font-family: 'Share Tech Mono', monospace;
+      font-size: 1.1rem;
+      color: var(--accent);
+      letter-spacing: 0.15em;
+    }
+    .logo span { color: var(--bright); }
+
+    .status-pill {
+      font-family: 'Share Tech Mono', monospace;
+      font-size: 0.7rem;
+      color: var(--safe);
+      border: 1px solid var(--safe);
+      padding: 3px 10px;
+      letter-spacing: 0.1em;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+    .status-pill::before {
+      content: '';
+      width: 6px; height: 6px;
+      background: var(--safe);
+      border-radius: 50%;
+      animation: blink 2s infinite;
+    }
+    @keyframes blink {
+      0%, 100% { opacity: 1; }
+      50%       { opacity: 0.2; }
+    }
+
+    /* ── MAIN LAYOUT ── */
+    main {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 0;
+      height: calc(100vh - 56px);
+    }
+
+    /* ── LEFT PANEL ── */
+    .left-panel {
+      border-right: 1px solid var(--border);
+      display: flex;
+      flex-direction: column;
+      padding: 2rem;
+      gap: 1.5rem;
+    }
+
+    .panel-label {
+      font-family: 'Share Tech Mono', monospace;
+      font-size: 0.65rem;
+      color: var(--muted);
+      letter-spacing: 0.2em;
+      text-transform: uppercase;
+    }
+
+    .upload-zone {
+      flex: 1;
+      border: 1px dashed var(--border);
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      gap: 1rem;
+      cursor: pointer;
+      position: relative;
+      transition: border-color 0.2s, background 0.2s;
+      background: #0d1015;
+      overflow: hidden;
+    }
+    .upload-zone:hover, .upload-zone.drag-over {
+      border-color: var(--accent);
+      background: #130e09;
+    }
+    .upload-zone.drag-over { border-style: solid; }
+
+    /* corner decorations */
+    .upload-zone::before, .upload-zone::after {
+      content: '';
+      position: absolute;
+      width: 16px; height: 16px;
+      border-color: var(--accent);
+      border-style: solid;
+    }
+    .upload-zone::before { top: 12px; left: 12px; border-width: 1px 0 0 1px; }
+    .upload-zone::after  { bottom: 12px; right: 12px; border-width: 0 1px 1px 0; }
+
+    .upload-icon {
+      width: 48px; height: 48px;
+      opacity: 0.3;
+    }
+
+    .upload-text {
+      text-align: center;
+    }
+    .upload-text h3 {
+      font-size: 1.1rem;
+      font-weight: 600;
+      color: var(--bright);
+      letter-spacing: 0.05em;
+    }
+    .upload-text p {
+      font-size: 0.85rem;
+      color: var(--muted);
+      margin-top: 4px;
+      font-weight: 300;
+    }
+
+    #file-input { display: none; }
+
+    /* preview image inside upload zone */
+    #preview {
+      position: absolute; inset: 0;
+      object-fit: cover;
+      width: 100%; height: 100%;
+      opacity: 0;
+      transition: opacity 0.3s;
+    }
+    #preview.visible { opacity: 1; }
+
+    .preview-overlay {
+      position: absolute; inset: 0;
+      background: linear-gradient(to top, rgba(10,12,15,0.85) 0%, transparent 50%);
+      opacity: 0;
+      transition: opacity 0.3s;
+      display: flex;
+      align-items: flex-end;
+      padding: 1rem;
+    }
+    #preview.visible ~ .preview-overlay { opacity: 1; }
+
+    #file-name {
+      font-family: 'Share Tech Mono', monospace;
+      font-size: 0.7rem;
+      color: var(--text);
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
+    /* ── ANALYSE BUTTON ── */
+    #analyse-btn {
+      background: var(--accent);
+      color: #000;
+      border: none;
+      padding: 14px 2rem;
+      font-family: 'Barlow Condensed', sans-serif;
+      font-size: 1rem;
+      font-weight: 700;
+      letter-spacing: 0.15em;
+      text-transform: uppercase;
+      cursor: pointer;
+      position: relative;
+      overflow: hidden;
+      transition: background 0.2s, transform 0.1s;
+      clip-path: polygon(0 0, calc(100% - 10px) 0, 100% 10px, 100% 100%, 10px 100%, 0 calc(100% - 10px));
+    }
+    #analyse-btn:hover  { background: #fb923c; }
+    #analyse-btn:active { transform: scale(0.98); }
+    #analyse-btn:disabled {
+      background: var(--muted);
+      cursor: not-allowed;
+    }
+
+    /* loading shimmer */
+    #analyse-btn.loading::after {
+      content: '';
+      position: absolute; inset: 0;
+      background: linear-gradient(90deg, transparent 0%, rgba(255,255,255,0.2) 50%, transparent 100%);
+      animation: shimmer 1s infinite;
+    }
+    @keyframes shimmer {
+      from { transform: translateX(-100%); }
+      to   { transform: translateX(100%); }
+    }
+
+    /* ── RIGHT PANEL ── */
+    .right-panel {
+      display: flex;
+      flex-direction: column;
+      padding: 2rem;
+      gap: 1.5rem;
+    }
+
+    /* ── RESULT CARD ── */
+    .result-card {
+      border: 1px solid var(--border);
+      padding: 2rem;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      gap: 0.75rem;
+      min-height: 180px;
+      position: relative;
+      background: #0d1015;
+      transition: border-color 0.4s;
+    }
+    .result-card.corroded { border-color: var(--danger); }
+    .result-card.normal   { border-color: var(--safe);   }
+
+    .result-card::before {
+      content: attr(data-label);
+      position: absolute;
+      top: -1px; left: 1.5rem;
+      background: var(--bg);
+      padding: 0 8px;
+      font-family: 'Share Tech Mono', monospace;
+      font-size: 0.6rem;
+      color: var(--muted);
+      letter-spacing: 0.15em;
+      transform: translateY(-50%);
+    }
+
+    .result-placeholder {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 0.5rem;
+      opacity: 0.25;
+    }
+    .result-placeholder svg { width: 40px; height: 40px; }
+    .result-placeholder p {
+      font-size: 0.85rem;
+      font-weight: 300;
+      letter-spacing: 0.1em;
+    }
+
+    .verdict {
+      display: none;
+      flex-direction: column;
+      align-items: center;
+      gap: 0.5rem;
+      animation: fadeUp 0.4s ease;
+    }
+    .verdict.show { display: flex; }
+
+    @keyframes fadeUp {
+      from { opacity: 0; transform: translateY(10px); }
+      to   { opacity: 1; transform: translateY(0); }
+    }
+
+    .verdict-icon { font-size: 3rem; line-height: 1; }
+
+    .verdict-label {
+      font-size: 2.5rem;
+      font-weight: 900;
+      letter-spacing: 0.1em;
+      text-transform: uppercase;
+    }
+    .verdict-label.corroded { color: var(--danger); }
+    .verdict-label.normal   { color: var(--safe);   }
+
+    .verdict-conf {
+      font-family: 'Share Tech Mono', monospace;
+      font-size: 0.85rem;
+      color: var(--muted);
+      letter-spacing: 0.1em;
+    }
+
+    /* ── PROBABILITY BARS ── */
+    .prob-section { display: flex; flex-direction: column; gap: 0.75rem; }
+
+    .prob-row { display: flex; flex-direction: column; gap: 6px; }
+
+    .prob-meta {
+      display: flex;
+      justify-content: space-between;
+      align-items: baseline;
+    }
+    .prob-name {
+      font-size: 0.8rem;
+      font-weight: 600;
+      letter-spacing: 0.1em;
+      text-transform: uppercase;
+      color: var(--bright);
+    }
+    .prob-val {
+      font-family: 'Share Tech Mono', monospace;
+      font-size: 0.75rem;
+      color: var(--muted);
+    }
+
+    .prob-track {
+      height: 4px;
+      background: var(--border);
+      position: relative;
+      overflow: hidden;
+    }
+    .prob-fill {
+      height: 100%;
+      width: 0%;
+      transition: width 0.6s cubic-bezier(0.4, 0, 0.2, 1);
+    }
+    .prob-fill.corroded { background: var(--danger); }
+    .prob-fill.normal   { background: var(--safe);   }
+
+    /* ── RAW JSON ── */
+    .raw-section {
+      margin-top: auto;
+    }
+    .raw-toggle {
+      font-family: 'Share Tech Mono', monospace;
+      font-size: 0.65rem;
+      color: var(--muted);
+      letter-spacing: 0.15em;
+      cursor: pointer;
+      background: none;
+      border: none;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      padding: 0;
+      transition: color 0.2s;
+    }
+    .raw-toggle:hover { color: var(--accent); }
+    .raw-toggle svg { width: 12px; height: 12px; transition: transform 0.2s; }
+    .raw-toggle.open svg { transform: rotate(90deg); }
+
+    #raw-json {
+      display: none;
+      margin-top: 0.75rem;
+      background: #060809;
+      border: 1px solid var(--border);
+      padding: 1rem;
+      font-family: 'Share Tech Mono', monospace;
+      font-size: 0.7rem;
+      color: #64748b;
+      line-height: 1.6;
+      white-space: pre;
+      overflow-x: auto;
+    }
+    #raw-json.show { display: block; }
+
+    /* ── ERROR BANNER ── */
+    #error-banner {
+      display: none;
+      background: rgba(239,68,68,0.1);
+      border: 1px solid var(--danger);
+      padding: 0.75rem 1rem;
+      font-family: 'Share Tech Mono', monospace;
+      font-size: 0.75rem;
+      color: var(--danger);
+      letter-spacing: 0.05em;
+    }
+    #error-banner.show { display: block; }
+
+    /* ── METADATA ROW ── */
+    .meta-row {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 1px;
+      background: var(--border);
+      border: 1px solid var(--border);
+    }
+    .meta-cell {
+      background: var(--panel);
+      padding: 0.75rem 1rem;
+      display: flex;
+      flex-direction: column;
+      gap: 3px;
+    }
+    .meta-cell-label {
+      font-family: 'Share Tech Mono', monospace;
+      font-size: 0.6rem;
+      color: var(--muted);
+      letter-spacing: 0.15em;
+    }
+    .meta-cell-val {
+      font-size: 0.9rem;
+      font-weight: 600;
+      color: var(--bright);
+      letter-spacing: 0.05em;
+    }
+  </style>
+</head>
+<body>
+
+<header>
+  <div class="logo">CORRO<span>SCAN</span></div>
+  <div class="status-pill" id="api-status">API OFFLINE</div>
+</header>
+
+<main>
+  <!-- ── LEFT ── -->
+  <div class="left-panel">
+    <div class="panel-label">// INPUT — SURFACE IMAGE</div>
+
+    <div class="upload-zone" id="drop-zone">
+      <svg class="upload-icon" viewBox="0 0 24 24" fill="none" stroke="#f97316" stroke-width="1.5">
+        <path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/>
+        <polyline points="17 8 12 3 7 8"/>
+        <line x1="12" y1="3" x2="12" y2="15"/>
+      </svg>
+      <div class="upload-text">
+        <h3>DROP IMAGE HERE</h3>
+        <p>or click to browse — JPG, PNG, WEBP</p>
+      </div>
+      <img id="preview" alt="preview"/>
+      <div class="preview-overlay">
+        <span id="file-name"></span>
+      </div>
+    </div>
+
+    <input type="file" id="file-input" accept="image/*"/>
+
+    <button id="analyse-btn" disabled>▶ &nbsp;RUN ANALYSIS</button>
+  </div>
+
+  <!-- ── RIGHT ── -->
+  <div class="right-panel">
+    <div class="panel-label">// OUTPUT — INSPECTION RESULT</div>
+
+    <!-- result card -->
+    <div class="result-card" id="result-card" data-label="VERDICT">
+      <div class="result-placeholder" id="placeholder">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+          <circle cx="12" cy="12" r="10"/>
+          <line x1="12" y1="8" x2="12" y2="12"/>
+          <line x1="12" y1="16" x2="12.01" y2="16"/>
+        </svg>
+        <p>AWAITING IMAGE INPUT</p>
+      </div>
+      <div class="verdict" id="verdict">
+        <div class="verdict-icon" id="verdict-icon"></div>
+        <div class="verdict-label" id="verdict-label"></div>
+        <div class="verdict-conf" id="verdict-conf"></div>
+      </div>
+    </div>
+
+    <!-- error -->
+    <div id="error-banner"></div>
+
+    <!-- probability bars -->
+    <div class="prob-section" id="prob-section" style="display:none">
+      <div class="prob-row">
+        <div class="prob-meta">
+          <span class="prob-name">Corroded</span>
+          <span class="prob-val" id="prob-corroded-val">—</span>
+        </div>
+        <div class="prob-track"><div class="prob-fill corroded" id="prob-corroded-fill"></div></div>
+      </div>
+      <div class="prob-row">
+        <div class="prob-meta">
+          <span class="prob-name">Normal</span>
+          <span class="prob-val" id="prob-normal-val">—</span>
+        </div>
+        <div class="prob-track"><div class="prob-fill normal" id="prob-normal-fill"></div></div>
+      </div>
+    </div>
+
+    <!-- metadata -->
+    <div class="meta-row" id="meta-row" style="display:none">
+      <div class="meta-cell">
+        <span class="meta-cell-label">MODEL</span>
+        <span class="meta-cell-val" id="meta-model">—</span>
+      </div>
+      <div class="meta-cell">
+        <span class="meta-cell-label">ENDPOINT</span>
+        <span class="meta-cell-val">/predict</span>
+      </div>
+      <div class="meta-cell">
+        <span class="meta-cell-label">LATENCY</span>
+        <span class="meta-cell-val" id="meta-latency">—</span>
+      </div>
+    </div>
+
+    <!-- raw json -->
+    <div class="raw-section">
+      <button class="raw-toggle" id="raw-toggle">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <polyline points="9 18 15 12 9 6"/>
+        </svg>
+        RAW JSON RESPONSE
+      </button>
+      <pre id="raw-json"></pre>
+    </div>
+
+  </div>
+</main>
+
+<script>
+  const API_BASE = 'http://localhost:8000';
+
+  const dropZone    = document.getElementById('drop-zone');
+  const fileInput   = document.getElementById('file-input');
+  const preview     = document.getElementById('preview');
+  const fileName    = document.getElementById('file-name');
+  const analyseBtn  = document.getElementById('analyse-btn');
+  const apiStatus   = document.getElementById('api-status');
+  const resultCard  = document.getElementById('result-card');
+  const placeholder = document.getElementById('placeholder');
+  const verdict     = document.getElementById('verdict');
+  const verdictIcon = document.getElementById('verdict-icon');
+  const verdictLabel= document.getElementById('verdict-label');
+  const verdictConf = document.getElementById('verdict-conf');
+  const errorBanner = document.getElementById('error-banner');
+  const probSection = document.getElementById('prob-section');
+  const metaRow     = document.getElementById('meta-row');
+  const rawToggle   = document.getElementById('raw-toggle');
+  const rawJson     = document.getElementById('raw-json');
+
+  let selectedFile = null;
+
+  // ── Check API health on load ──
+  async function checkHealth() {
+    try {
+      const res = await fetch(`${API_BASE}/health`, { signal: AbortSignal.timeout(3000) });
+      if (res.ok) {
+        apiStatus.textContent = 'API ONLINE';
+        apiStatus.style.color = 'var(--safe)';
+        apiStatus.style.borderColor = 'var(--safe)';
+        // fetch model info
+        const info = await fetch(`${API_BASE}/`).then(r => r.json());
+        document.getElementById('meta-model').textContent = info.model?.toUpperCase() || '—';
+      }
+    } catch {
+      apiStatus.textContent = 'API OFFLINE';
+    }
+  }
+  checkHealth();
+
+  // ── File selection ──
+  dropZone.addEventListener('click', () => fileInput.click());
+  fileInput.addEventListener('change', e => handleFile(e.target.files[0]));
+
+  dropZone.addEventListener('dragover', e => { e.preventDefault(); dropZone.classList.add('drag-over'); });
+  dropZone.addEventListener('dragleave', () => dropZone.classList.remove('drag-over'));
+  dropZone.addEventListener('drop', e => {
+    e.preventDefault();
+    dropZone.classList.remove('drag-over');
+    handleFile(e.dataTransfer.files[0]);
+  });
+
+  function handleFile(file) {
+    if (!file || !file.type.startsWith('image/')) return;
+    selectedFile = file;
+    const url = URL.createObjectURL(file);
+    preview.src = url;
+    preview.classList.add('visible');
+    fileName.textContent = file.name;
+    analyseBtn.disabled = false;
+    resetResult();
+  }
+
+  // ── Analyse ──
+  analyseBtn.addEventListener('click', async () => {
+    if (!selectedFile) return;
+
+    analyseBtn.disabled = true;
+    analyseBtn.classList.add('loading');
+    analyseBtn.textContent = 'ANALYSING...';
+    resetResult();
+    errorBanner.classList.remove('show');
+
+    const formData = new FormData();
+    formData.append('file', selectedFile);
+
+    const t0 = performance.now();
+
+    try {
+      const res  = await fetch(`${API_BASE}/predict`, { method: 'POST', body: formData });
+      const latency = Math.round(performance.now() - t0);
+
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({ detail: res.statusText }));
+        throw new Error(err.detail || 'Server error');
+      }
+
+      const data = await res.json();
+      showResult(data, latency);
+
+    } catch (err) {
+      errorBanner.textContent = `⚠ ERROR: ${err.message}`;
+      errorBanner.classList.add('show');
+    } finally {
+      analyseBtn.disabled = false;
+      analyseBtn.classList.remove('loading');
+      analyseBtn.textContent = '▶  RUN ANALYSIS';
+    }
+  });
+
+  function showResult(data, latency) {
+    const isCorroded = data.prediction.toLowerCase() === 'corroded';
+    const cls        = isCorroded ? 'corroded' : 'normal';
+
+    // verdict card
+    placeholder.style.display = 'none';
+    resultCard.className = `result-card ${cls}`;
+    verdictIcon.textContent  = isCorroded ? '⚠' : '✓';
+    verdictLabel.className   = `verdict-label ${cls}`;
+    verdictLabel.textContent = data.prediction.toUpperCase();
+    verdictConf.textContent  = `CONFIDENCE: ${data.confidence}%`;
+    verdict.classList.add('show');
+
+    // probability bars
+    probSection.style.display = 'flex';
+    const probs = data.probabilities;
+    const corrodedPct = probs['Corroded'] ?? probs['corroded'] ?? 0;
+    const normalPct   = probs['Normal']   ?? probs['normal']   ?? 0;
+
+    document.getElementById('prob-corroded-val').textContent  = `${corrodedPct}%`;
+    document.getElementById('prob-normal-val').textContent    = `${normalPct}%`;
+    setTimeout(() => {
+      document.getElementById('prob-corroded-fill').style.width = `${corrodedPct}%`;
+      document.getElementById('prob-normal-fill').style.width   = `${normalPct}%`;
+    }, 50);
+
+    // metadata
+    metaRow.style.display = 'grid';
+    document.getElementById('meta-latency').textContent = `${latency}ms`;
+
+    // raw json
+    rawJson.textContent = JSON.stringify(data, null, 2);
+  }
+
+  function resetResult() {
+    resultCard.className = 'result-card';
+    placeholder.style.display = 'flex';
+    verdict.classList.remove('show');
+    probSection.style.display  = 'none';
+    metaRow.style.display      = 'none';
+    rawJson.textContent        = '';
+    rawJson.classList.remove('show');
+    rawToggle.classList.remove('open');
+    document.getElementById('prob-corroded-fill').style.width = '0%';
+    document.getElementById('prob-normal-fill').style.width   = '0%';
+  }
+
+  // ── Raw JSON toggle ──
+  rawToggle.addEventListener('click', () => {
+    rawToggle.classList.toggle('open');
+    rawJson.classList.toggle('show');
+  });
+</script>
+</body>
+</html>
